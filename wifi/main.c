@@ -14,6 +14,7 @@
 #include <errno.h>
 #include <string.h>
 #include <getopt.h>
+#include <stdbool.h>
 
 static void usage(char *progname)
 {
@@ -372,6 +373,24 @@ int add_wifi_networks(char *ssid, char *password) {
     pclose(fp);
     fp = NULL;
 
+    // 保存配置
+    fp = popen("wpa_cli save_config", "r");
+    if (!fp) {
+        perror("popen() failed");
+        // ret = -1;
+        // goto error;
+    }   
+
+    // fgets(buffer, 256, fp);     // 跳过前面1行
+    // fgets(buffer, 256, fp);
+    // if (strstr(buffer, "OK") == NULL) {
+    //     ret = -1;
+    //     goto error;
+    // }
+
+    pclose(fp);
+    fp = NULL;
+
     ret = 0;
 
 error:
@@ -394,6 +413,25 @@ int connect_wifi_networks(int net_id) {
 
     // 选择网络
     snprintf(buffer, sizeof(buffer), "wpa_cli select_network %d", net_id);
+    fp = popen(buffer, "r");
+    if (!fp) {
+        perror("popen() failed");
+        ret = -1;
+        goto error;
+    }
+
+    fgets(buffer, 256, fp);     // 跳过前面1行
+    fgets(buffer, 256, fp);
+    if (strstr(buffer, "OK") == NULL) {
+        ret = -1;
+        goto error;
+    }
+
+    pclose(fp);
+    fp = NULL;
+
+    // 使能网络
+    snprintf(buffer, sizeof(buffer), "wpa_cli enable_network %d", net_id);
     fp = popen(buffer, "r");
     if (!fp) {
         perror("popen() failed");
@@ -540,16 +578,28 @@ error:
 /*
     * 删除一个wifi网络
     * 返回值：0表示成功，-1表示失败
-    * id: 要删除的网络ID
+    * id: 要删除的网络ID，-1表示删除当前网络
 */
 int remove_wifi_networks(int id)
 {
     int ret = 0;
     char buffer[256];
     FILE *fp = NULL;
+    int net_id = id;
+
+    // 获取当前网络状态
+    struct wifi_status status = {0};
+    if (get_wifi_interface_status(&status) != 0) {
+        fprintf(stderr, "获取当前wifi状态失败\n");
+        return -1;
+    }
+
+    if (id < 0) {
+        net_id = status.id;
+    }
 
     // 禁用网络
-    snprintf(buffer, sizeof(buffer), "wpa_cli disable_network %d", id);
+    snprintf(buffer, sizeof(buffer), "wpa_cli disable_network %d", net_id);
     fp = popen(buffer, "r");
     if (!fp) {
         perror("popen() failed");
@@ -568,7 +618,7 @@ int remove_wifi_networks(int id)
     fp = NULL;
 
     // 删除网络
-    snprintf(buffer, sizeof(buffer), "wpa_cli remove_network %d", id);
+    snprintf(buffer, sizeof(buffer), "wpa_cli remove_network %d", net_id);
     fp = popen(buffer, "r");
     if (!fp) {
         perror("popen() failed");
@@ -585,6 +635,33 @@ int remove_wifi_networks(int id)
 
     pclose(fp);
     fp = NULL;
+
+    // 保存配置
+    fp = popen("wpa_cli save_config", "r");
+    if (!fp) {
+        perror("popen() failed");
+        // ret = -1;
+        // goto error;
+    }   
+
+    // fgets(buffer, 256, fp);     // 跳过前面1行
+    // fgets(buffer, 256, fp);
+    // if (strstr(buffer, "OK") == NULL) {
+    //     ret = -1;
+    //     goto error;
+    // }
+
+    pclose(fp);
+    fp = NULL;
+
+    // 如果是当前网络，需要删除路由
+    if((id < 0) || (id == net_id)) {
+        snprintf(buffer, sizeof(buffer), "ip route flush dev %s", status.interface);
+        fp = popen(buffer, "r");
+        if (!fp) {
+            perror("popen() failed");  
+        }
+    }
 
     ret = 0;
 
